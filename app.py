@@ -12,7 +12,6 @@ st.markdown("""
     <style>
     .main { background-color: #f5f5f5; }
     .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #003399; color: white; }
-    .stDataFrame { background-color: white; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -22,7 +21,7 @@ DB_NAME = "comasur_flota.db"
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    # Tabla de Vehículos con campos de la ficha técnica
+    # Tabla de Vehículos
     c.execute('''
         CREATE TABLE IF NOT EXISTS vehiculos (
             matricula TEXT PRIMARY KEY,
@@ -48,12 +47,11 @@ def init_db():
         )
     ''')
     
-    # Insertar vehículo inicial (Citroen Jumper 4076 HMS) si no existe
+    # Datos iniciales según ficha técnica (4076 HMS)
     c.execute("SELECT COUNT(*) FROM vehiculos WHERE matricula = '4076 HMS'")
     if c.fetchone()[0] == 0:
         c.execute('''
-            INSERT INTO vehiculos (matricula, modelo, fecha_compra, vida_util, fecha_retirada, ubicacion, caracteristicas, prov_recambios)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?,?)
         ''', (
             '4076 HMS', 
             'CITROEN JUMPER FGN 35 LTA', 
@@ -69,109 +67,100 @@ def init_db():
 
 init_db()
 
-# --- FUNCIONES DE AYUDA ---
+# --- FUNCIONES DE BASE DE DATOS ---
 def query_db(query, params=()):
-    conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    return df
+    with sqlite3.connect(DB_NAME) as conn:
+        return pd.read_sql_query(query, conn, params=params)
 
 def execute_db(query, params=()):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute(query, params)
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_NAME) as conn:
+        c = conn.cursor()
+        c.execute(query, params)
+        conn.commit()
 
 # --- BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     try:
-        # Buscamos el archivo LOGO.png que subiste
+        # Se intenta cargar LOGO.png con el nuevo parámetro de compatibilidad
         logo = Image.open("LOGO.png")
         st.image(logo, use_container_width=True)
-    except:
-        st.error("Archivo 'LOGO.png' no encontrado.")
+    except Exception as e:
+        st.error("Archivo 'LOGO.png' no detectado en el repositorio.")
     
     st.title("Gestión de Flota")
-    menu = st.radio("Navegación", ["Panel de Control", "Registro de Vehículo", "Anotar Mantenimiento"])
-    st.info("Empresa: VEHICULOS COMASUR\nResponsable de Calidad: Antonio")
-
-# --- MÓDULO 1: PANEL DE CONTROL ---
-if menu == "Panel de Control":
-    st.header("📊 Estado General de la Flota")
-    
-    # Filtro por matrícula
-    vehiculos_list = query_db("SELECT matricula FROM vehiculos")['matricula'].tolist()
-    sel_vehiculo = st.selectbox("Seleccione un vehículo para ver detalles:", ["Todos"] + vehiculos_list)
-    
-    if sel_vehiculo == "Todos":
-        df_v = query_db("SELECT matricula, modelo, ubicacion, fecha_retirada FROM vehiculos")
-        st.subheader("Listado de Unidades")
-        st.dataframe(df_v, use_container_width=True, hide_index=True)
-    else:
-        # Ficha detallada del vehículo
-        detalles = query_db("SELECT * FROM vehiculos WHERE matricula = ?", (sel_vehiculo,)).iloc[0]
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Matrícula", detalles['matricula'])
-            st.write(f"**Modelo:** {detalles['modelo']}")
-            st.write(f"**Ubicación:** {detalles['ubicacion']}")
-        with col2:
-            st.write(f"**Vida útil:** {detalles['vida_util']} años")
-            st.write(f"**Fecha Retirada:** {detalles['fecha_retirada']}")
-            st.write(f"**Recambios:** {detalles['prov_recambios']}")
-        
-        st.info(f"**Características Técnicas:** {detalles['caracteristicas']}")
-
+    menu = st.radio("Menú Principal", ["Estado de Flota", "Nuevo Vehículo", "Registrar Mantenimiento"])
     st.divider()
-    st.subheader("🛠️ Historial Reciente de Mantenimiento e ITV")
-    query_m = "SELECT matricula, fecha, operacion, responsable, observaciones FROM mantenimientos"
-    if sel_vehiculo != "Todos":
-        query_m += f" WHERE matricula = '{sel_vehiculo}'"
-    df_m = query_db(query_m + " ORDER BY fecha DESC")
-    st.dataframe(df_m, use_container_width=True, hide_index=True)
+    st.caption("COMASUR - Control de Calidad y Mantenimiento")
+
+# --- MÓDULO 1: ESTADO DE FLOTA ---
+if menu == "Estado de Flota":
+    st.header("📊 Panel de Control Vehículos")
+    
+    df_v = query_db("SELECT * FROM vehiculos")
+    if not df_v.empty:
+        sel_mat = st.selectbox("Seleccione matrícula para ver detalle:", ["Ver todos"] + df_v['matricula'].tolist())
+        
+        if sel_mat == "Ver todos":
+            st.dataframe(df_v[['matricula', 'modelo', 'ubicacion', 'fecha_retirada']], use_container_width=True, hide_index=True)
+        else:
+            v_data = df_v[df_v['matricula'] == sel_mat].iloc[0]
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Matrícula", v_data['matricula'])
+            c2.metric("Ubicación", v_data['ubicacion'])
+            c3.metric("Vida Útil hasta", v_data['fecha_retirada'][:4])
+            
+            st.info(f"**Detalles Técnicos:** {v_data['caracteristicas']}")
+            st.write(f"**Proveedores:** {v_data['prov_recambios']}")
+
+        st.subheader("🛠️ Historial de Intervenciones")
+        q_m = "SELECT fecha, operacion, responsable, observaciones FROM mantenimientos"
+        if sel_mat != "Ver todos":
+            q_m += f" WHERE matricula = '{sel_mat}'"
+        df_m = query_db(q_m + " ORDER BY fecha DESC")
+        st.table(df_m)
+    else:
+        st.warning("No hay vehículos registrados.")
 
 # --- MÓDULO 2: REGISTRO DE VEHÍCULO ---
-elif menu == "Registro de Vehículo":
-    st.header("📝 Alta de nueva unidad en COMASUR")
-    with st.form("nuevo_v"):
-        c1, c2 = st.columns(2)
-        with c1:
-            mat = st.text_input("Matrícula / Código")
-            mod = st.text_input("Denominación (Ej: CITROEN JUMPER)")
-            f_compra = st.date_input("Fecha de Compra")
-        with c2:
-            v_util = st.number_input("Vida útil (Años)", value=20)
-            f_ret = st.date_input("Fecha prevista de retirada")
-            ubica = st.selectbox("Ubicación", ["NAVE", "EXTERIOR", "CLIENTE"])
+elif menu == "Nuevo Vehículo":
+    st.header("🚚 Alta de Unidad")
+    with st.form("form_v"):
+        col1, col2 = st.columns(2)
+        with col1:
+            mat = st.text_input("Matrícula")
+            mod = st.text_input("Modelo (Ej: Citroen Jumper)")
+            f_c = st.date_input("Fecha de Compra", value=date.today())
+        with col2:
+            v_u = st.number_input("Vida útil (años)", value=20)
+            f_r = st.date_input("Fecha Retirada", value=date(2032, 11, 2))
+            ubi = st.selectbox("Ubicación", ["NAVE", "OBRA", "EXTERIOR"])
         
-        caract = st.text_area("Características (Motor, Carga, Consumo)")
-        provs = st.text_input("Proveedores de Recambios habituales")
+        car = st.text_area("Características (Carga, Motor, Consumo)")
+        prv = st.text_input("Proveedores habituales")
         
         if st.form_submit_button("Guardar Vehículo"):
-            execute_db('''
-                INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?,?)
-            ''', (mat, mod, str(f_compra), v_util, str(f_ret), ubica, caract, provs))
-            st.success("Vehículo registrado correctamente.")
+            if mat and mod:
+                execute_db("INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?,?)", 
+                           (mat, mod, str(f_c), v_u, str(f_r), ubi, car, prv))
+                st.success("Vehículo registrado.")
+                st.rerun()
 
-# --- MÓDULO 3: ANOTAR MANTENIMIENTO ---
-elif menu == "Anotar Mantenimiento":
-    st.header("🔧 Registro de Intervenciones Técnicas")
-    v_list = query_db("SELECT matricula FROM vehiculos")['matricula'].tolist()
+# --- MÓDULO 3: REGISTRAR MANTENIMIENTO ---
+elif menu == "Registrar Mantenimiento":
+    st.header("🔧 Registro de Mantenimiento / ITV")
+    mats = query_db("SELECT matricula FROM vehiculos")['matricula'].tolist()
     
-    if not v_list:
-        st.warning("Debe registrar un vehículo primero.")
+    if not mats:
+        st.error("Registre un vehículo primero.")
     else:
-        with st.form("nuevo_m"):
-            v_sel = st.selectbox("Vehículo", v_list)
-            f_op = st.date_input("Fecha de operación")
-            tipo_op = st.selectbox("Tipo de Operación", ["Revisión anual", "ITV", "Reparación", "Seguro/Impuestos"])
+        with st.form("form_m"):
+            v_sel = st.selectbox("Matrícula", mats)
+            f_m = st.date_input("Fecha", value=date.today())
+            op = st.selectbox("Operación", ["Revisión anual", "ITV", "Reparación", "Control de Seguridad"])
             resp = st.text_input("Responsable (Ej: Antonio)")
-            obs = st.text_area("Observaciones (Ej: Seguro pagado, filtros cambiados)")
+            obs = st.text_area("Observaciones (Seguro, Impuestos, filtros...)")
             
-            if st.form_submit_button("Registrar Operación"):
-                execute_db('''
-                    INSERT INTO mantenimientos (matricula, fecha, operacion, responsable, observaciones)
-                    VALUES (?,?,?,?,?)
-                ''', (v_sel, str(f_op), tipo_op, resp, obs))
-                st.success("Operación guardada en el historial.")
+            if st.form_submit_button("Anotar"):
+                execute_db("INSERT INTO mantenimientos (matricula, fecha, operacion, responsable, observaciones) VALUES (?,?,?,?,?)",
+                           (v_sel, str(f_m), op, resp, obs))
+                st.success("Registro guardado.")
