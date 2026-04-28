@@ -55,7 +55,7 @@ def execute(q, p=()):
         conn.execute(q, p)
         conn.commit()
 
-# --- ESTADO REALISTA ---
+# --- ESTADO ---
 def estado(fecha):
     if not fecha:
         return "🟢 OK"
@@ -120,8 +120,14 @@ if menu == "📋 Flota":
             key="editor"
         )
 
+        # --- GUARDADO CORREGIDO ---
         if st.button("💾 Guardar cambios"):
             for _, row in edited_df.iterrows():
+
+                fecha_itv = str(row["fecha_itv"]) if pd.notna(row["fecha_itv"]) else None
+                fecha_seguro = str(row["fecha_seguro"]) if pd.notna(row["fecha_seguro"]) else None
+                fecha_revision = str(row["fecha_revision"]) if pd.notna(row["fecha_revision"]) else None
+
                 execute("""
                 UPDATE vehiculos SET 
                 modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=? 
@@ -129,14 +135,14 @@ if menu == "📋 Flota":
                 (
                     row["modelo"],
                     row["ubicacion"],
-                    str(row["fecha_itv"]),
-                    str(row["fecha_seguro"]),
-                    str(row["fecha_revision"]),
+                    fecha_itv,
+                    fecha_seguro,
+                    fecha_revision,
                     row["observaciones"],
                     row["matricula"]
                 ))
 
-            st.success("Cambios guardados")
+            st.success("Cambios guardados correctamente")
             st.rerun()
 
         # --- ESTADO VISUAL ---
