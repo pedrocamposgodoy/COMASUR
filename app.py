@@ -16,21 +16,15 @@ st.markdown("""
     background: linear-gradient(180deg,#eef3f9,#dbe7f3);
 }
 
-/* TARJETAS */
 .card {
     background-color: white;
     padding: 20px;
     border-radius: 16px;
     box-shadow: 0 6px 18px rgba(0,0,0,0.06);
     border: 1px solid #e2e8f0;
-    transition: 0.2s;
     margin-bottom: 20px;
 }
-.card:hover {
-    transform: translateY(-4px);
-}
 
-/* TITULOS */
 .title {
     font-size: 18px;
     font-weight: 700;
@@ -40,14 +34,13 @@ st.markdown("""
     font-size: 14px;
 }
 
-/* BOTONES */
 .stButton button {
     border-radius: 10px;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# --- DB ---
+# --- DB INIT ---
 def init_db():
     conn = sqlite3.connect(DB)
     c = conn.cursor()
@@ -82,11 +75,16 @@ def run(q, p=()):
         conn.execute(q, p)
         conn.commit()
 
+def get_df(query):
+    conn = sqlite3.connect(DB)
+    df = pd.read_sql(query, conn)
+    conn.close()
+    return df
+
 # --- ESTADO ---
 def estado(fecha):
     if not fecha:
         return "🟢 OK"
-
     diff = (datetime.fromisoformat(str(fecha)) - datetime.today()).days
 
     if diff < 0:
@@ -118,12 +116,11 @@ if menu == "📋 Flota" and st.session_state.vehiculo_sel is None:
 
     st.title("🚛 Flota COMASUR")
 
-    df = pd.read_sql("SELECT * FROM vehiculos", sqlite3.connect(DB))
+    df = get_df("SELECT * FROM vehiculos")
 
     if df.empty:
         st.warning("No hay vehículos")
     else:
-        # KPIs
         c1, c2, c3 = st.columns(3)
         c1.metric("Vehículos", len(df))
         c2.metric("Críticos", sum(df["fecha_itv"].apply(lambda x: estado(x)=="🔴 Crítico")))
@@ -157,7 +154,7 @@ if menu == "📋 Flota" and st.session_state.vehiculo_sel is None:
 elif st.session_state.vehiculo_sel:
 
     mat = st.session_state.vehiculo_sel
-    df = pd.read_sql(f"SELECT * FROM vehiculos WHERE matricula='{mat}'", sqlite3.connect(DB))
+    df = get_df(f"SELECT * FROM vehiculos WHERE matricula='{mat}'")
     v = df.iloc[0]
 
     st.title(f"🚐 Ficha {mat}")
@@ -205,20 +202,39 @@ elif st.session_state.vehiculo_sel:
             st.success("Añadido")
             st.rerun()
 
-    # --- HISTORIAL ---
-    st.markdown("### 📋 Historial")
+    # --- HISTORIAL EDITABLE ---
+    st.markdown("### 📋 Historial de mantenimiento")
 
-    df_m = pd.read_sql(f"SELECT * FROM mantenimientos WHERE matricula='{mat}'", sqlite3.connect(DB))
+    df_m = get_df(f"SELECT * FROM mantenimientos WHERE matricula='{mat}'")
 
     if not df_m.empty:
         for _, row in df_m.iterrows():
-            c1, c2, c3, c4 = st.columns([2,3,2,2])
-            c1.write(row["fecha"])
-            c2.write(row["concepto"])
-            c3.write(f"{row['coste']} €")
 
-            if row["factura"]:
-                c4.download_button("📄 Factura", row["factura"], row["nombre_factura"])
+            with st.expander(f"🧾 {row['fecha']} - {row['concepto']}"):
+
+                with st.form(f"edit_{row['id']}"):
+
+                    concepto = st.text_input("Concepto", row["concepto"])
+                    coste = st.number_input("Coste", value=float(row["coste"]))
+
+                    if row["factura"]:
+                        st.download_button("📄 Ver factura", row["factura"], row["nombre_factura"])
+
+                    col1, col2 = st.columns(2)
+
+                    if col1.form_submit_button("💾 Guardar"):
+                        run("""
+                        UPDATE mantenimientos 
+                        SET concepto=?, coste=? 
+                        WHERE id=?""",
+                        (concepto, coste, row["id"]))
+                        st.success("Actualizado")
+                        st.rerun()
+
+                    if col2.form_submit_button("🗑️ Borrar"):
+                        run("DELETE FROM mantenimientos WHERE id=?", (row["id"],))
+                        st.warning("Eliminado")
+                        st.rerun()
 
         st.metric("💸 Total vehículo", f"{df_m['coste'].sum():.2f} €")
 
