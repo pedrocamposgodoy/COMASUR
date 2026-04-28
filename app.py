@@ -4,25 +4,14 @@ import sqlite3
 from datetime import date, datetime
 
 # --- CONFIG ---
-st.set_page_config(page_title="COMASUR Fleet Manager", layout="wide")
+st.set_page_config(page_title="COMASUR Fleet", layout="wide")
 
-DB_NAME = "comasur_flota.db"
+DB = "comasur_flota.db"
 UBICACIONES = ["NAVE ALBOLOTE", "ZAIDIN", "MOTRIL", "MALAGA"]
-
-# --- ESTILO ---
-st.markdown("""
-<style>
-.stApp {background: linear-gradient(180deg,#e6edf5,#dbe7f3);}
-div[data-testid="stDataEditor"] {
-    border-radius: 10px;
-    border: 1px solid #cbd5e1;
-}
-</style>
-""", unsafe_allow_html=True)
 
 # --- DB ---
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB)
     c = conn.cursor()
 
     c.execute('''CREATE TABLE IF NOT EXISTS vehiculos (
@@ -50,8 +39,8 @@ def init_db():
 
 init_db()
 
-def execute(q, p=()):
-    with sqlite3.connect(DB_NAME) as conn:
+def run(q, p=()):
+    with sqlite3.connect(DB) as conn:
         conn.execute(q, p)
         conn.commit()
 
@@ -59,7 +48,6 @@ def execute(q, p=()):
 def estado(fecha):
     if not fecha:
         return "🟢 OK"
-
     diff = (datetime.fromisoformat(str(fecha)) - datetime.today()).days
 
     if diff < 0:
@@ -71,29 +59,9 @@ def estado(fecha):
     else:
         return "🟢 OK"
 
-# --- FUNCIÓN GUARDADO AUTOMÁTICO ---
-def guardar_cambios():
-    edited_df = st.session_state["editor"]
-
-    for _, row in edited_df.iterrows():
-
-        fecha_itv = str(row["fecha_itv"]) if pd.notna(row["fecha_itv"]) else None
-        fecha_seguro = str(row["fecha_seguro"]) if pd.notna(row["fecha_seguro"]) else None
-        fecha_revision = str(row["fecha_revision"]) if pd.notna(row["fecha_revision"]) else None
-
-        execute("""
-        UPDATE vehiculos SET 
-        modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=? 
-        WHERE matricula=?""",
-        (
-            row["modelo"],
-            row["ubicacion"],
-            fecha_itv,
-            fecha_seguro,
-            fecha_revision,
-            row["observaciones"],
-            row["matricula"]
-        ))
+# --- SESSION ---
+if "vehiculo_sel" not in st.session_state:
+    st.session_state.vehiculo_sel = None
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -102,94 +70,104 @@ with st.sidebar:
     except:
         st.write("Sube LOGO.png")
 
-    menu = st.radio("", ["📋 Flota","➕ Vehículo","🔧 Mantenimiento","💾 Backup"])
+    menu = st.radio("", ["📋 Flota", "➕ Vehículo", "💾 Backup"])
 
-# --- HEADER ---
-st.title("🚛 COMASUR Fleet Manager")
+# --- DASHBOARD ---
+if menu == "📋 Flota" and st.session_state.vehiculo_sel is None:
 
-# --- FLOTA ---
-if menu == "📋 Flota":
+    st.title("🚛 Flota COMASUR")
 
-    df = pd.read_sql("SELECT * FROM vehiculos", sqlite3.connect(DB_NAME))
+    df = pd.read_sql("SELECT * FROM vehiculos", sqlite3.connect(DB))
 
-    # ALERTAS
-    alertas = []
-    for _, v in df.iterrows():
-        for campo in ["fecha_itv","fecha_seguro","fecha_revision"]:
-            if estado(v[campo]) != "🟢 OK":
-                alertas.append(f"{campo.replace('fecha_','').upper()} {v['matricula']}")
-
-    if alertas:
-        st.warning("🔔 " + " | ".join(alertas))
-
-    if not df.empty:
-
-        st.markdown("### ✏️ Editar flota (auto-guardado)")
-
-        df_edit = df[[
-            "matricula",
-            "modelo",
-            "ubicacion",
-            "fecha_itv",
-            "fecha_seguro",
-            "fecha_revision",
-            "observaciones"
-        ]].copy()
-
-        st.data_editor(
-            df_edit,
-            use_container_width=True,
-            num_rows="dynamic",
-            key="editor",
-            on_change=guardar_cambios
-        )
-
-        st.success("💾 Cambios guardados automáticamente")
-
-        # --- ESTADO ---
-        st.markdown("### 🚦 Estado de la flota")
-
-        df_estado = pd.DataFrame({
-            "Matrícula": df["matricula"],
-            "ITV": df["fecha_itv"].apply(estado),
-            "Seguro": df["fecha_seguro"].apply(estado),
-            "Revisión": df["fecha_revision"].apply(estado)
-        })
-
-        st.dataframe(df_estado, use_container_width=True)
-
-        # --- HISTORIAL ---
-        sel = st.selectbox("Seleccionar vehículo", df["matricula"])
-
-        df_m = pd.read_sql(
-            f"SELECT * FROM mantenimientos WHERE matricula='{sel}'",
-            sqlite3.connect(DB_NAME)
-        )
-
-        st.markdown("### 📋 Historial")
-
-        if not df_m.empty:
-            for _, row in df_m.iterrows():
-                c1,c2,c3,c4 = st.columns([2,3,2,2])
-                c1.write(row["fecha"])
-                c2.write(row["concepto"])
-                c3.write(f"{row['coste']} €")
-
-                if row["factura"]:
-                    c4.download_button("📄 Factura", row["factura"], row["nombre_factura"])
-                else:
-                    c4.write("—")
-
-            st.metric("💸 Total vehículo", f"{df_m['coste'].sum():.2f} €")
-
-        else:
-            st.info("Sin mantenimientos")
-
-    else:
+    if df.empty:
         st.warning("No hay vehículos")
+    else:
+        st.markdown("### Estado general")
 
-# --- NUEVO VEHÍCULO ---
+        for _, v in df.iterrows():
+            c1, c2, c3, c4, c5 = st.columns([2,3,2,2,1])
+
+            c1.markdown(f"**{v['matricula']}**")
+            c2.write(v["modelo"])
+            c3.write(v["ubicacion"])
+            c4.write(estado(v["fecha_itv"]))
+
+            if c5.button("🚐", key=v["matricula"]):
+                st.session_state.vehiculo_sel = v["matricula"]
+                st.rerun()
+
+# --- FICHA VEHÍCULO ---
+elif st.session_state.vehiculo_sel:
+
+    mat = st.session_state.vehiculo_sel
+
+    df = pd.read_sql(f"SELECT * FROM vehiculos WHERE matricula='{mat}'", sqlite3.connect(DB))
+    v = df.iloc[0]
+
+    st.title(f"🚐 Ficha {mat}")
+
+    if st.button("⬅️ Volver"):
+        st.session_state.vehiculo_sel = None
+        st.rerun()
+
+    st.markdown("### ✏️ Datos del vehículo")
+
+    with st.form("editar"):
+        modelo = st.text_input("Modelo", v["modelo"])
+        ubicacion = st.selectbox("Ubicación", UBICACIONES, index=UBICACIONES.index(v["ubicacion"]))
+        itv = st.date_input("ITV", datetime.fromisoformat(v["fecha_itv"]) if v["fecha_itv"] else date.today())
+        seguro = st.date_input("Seguro", datetime.fromisoformat(v["fecha_seguro"]) if v["fecha_seguro"] else date.today())
+        revision = st.date_input("Revisión", datetime.fromisoformat(v["fecha_revision"]) if v["fecha_revision"] else date.today())
+        obs = st.text_area("Observaciones", v["observaciones"])
+
+        if st.form_submit_button("Guardar cambios"):
+            run("""
+            UPDATE vehiculos SET modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=? 
+            WHERE matricula=?""",
+            (modelo, ubicacion, str(itv), str(seguro), str(revision), obs, mat))
+            st.success("Guardado")
+            st.rerun()
+
+    # --- MANTENIMIENTO ---
+    st.markdown("### 🔧 Añadir mantenimiento")
+
+    with st.form("mant"):
+        concepto = st.text_input("Concepto")
+        coste = st.number_input("Coste", 0.0)
+        file = st.file_uploader("Factura PDF")
+
+        data = file.getvalue() if file else None
+        name = file.name if file else None
+
+        if st.form_submit_button("Guardar mantenimiento"):
+            run(
+                "INSERT INTO mantenimientos (matricula,fecha,concepto,coste,factura,nombre_factura) VALUES (?,?,?,?,?,?)",
+                (mat, str(date.today()), concepto, coste, data, name)
+            )
+            st.success("Añadido")
+            st.rerun()
+
+    # --- HISTORIAL ---
+    st.markdown("### 📋 Historial")
+
+    df_m = pd.read_sql(f"SELECT * FROM mantenimientos WHERE matricula='{mat}'", sqlite3.connect(DB))
+
+    if not df_m.empty:
+        for _, row in df_m.iterrows():
+            c1, c2, c3, c4 = st.columns([2,3,2,2])
+            c1.write(row["fecha"])
+            c2.write(row["concepto"])
+            c3.write(f"{row['coste']} €")
+
+            if row["factura"]:
+                c4.download_button("📄 Factura", row["factura"], row["nombre_factura"])
+
+        st.metric("💸 Total", f"{df_m['coste'].sum():.2f} €")
+
+# --- ALTA VEHÍCULO ---
 elif menu == "➕ Vehículo":
+
+    st.title("Nuevo vehículo")
 
     with st.form("alta"):
         mat = st.text_input("Matrícula")
@@ -197,62 +175,26 @@ elif menu == "➕ Vehículo":
         ubi = st.selectbox("Ubicación", UBICACIONES)
         itv = st.date_input("ITV")
         seg = st.date_input("Seguro")
-        rev = st.date_input("Próxima revisión")
+        rev = st.date_input("Revisión")
         obs = st.text_area("Observaciones")
 
         if st.form_submit_button("Crear"):
-            execute(
-                "INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?)",
-                (mat, mod, ubi, str(itv), str(seg), str(rev), obs)
-            )
+            run("INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?)",
+                (mat, mod, ubi, str(itv), str(seg), str(rev), obs))
             st.success("Vehículo creado")
             st.rerun()
-
-# --- MANTENIMIENTO ---
-elif menu == "🔧 Mantenimiento":
-
-    mats = pd.read_sql("SELECT matricula FROM vehiculos", sqlite3.connect(DB_NAME))["matricula"]
-
-    if len(mats) > 0:
-
-        with st.form("mant"):
-            v = st.selectbox("Vehículo", mats)
-            concepto = st.text_input("Concepto")
-            coste = st.number_input("Coste", 0.0)
-            file = st.file_uploader("Factura PDF")
-
-            data = None
-            name = ""
-
-            if file:
-                data = file.getvalue()
-                name = file.name
-
-            if st.form_submit_button("Guardar"):
-                execute(
-                    "INSERT INTO mantenimientos (matricula,fecha,concepto,coste,factura,nombre_factura) VALUES (?,?,?,?,?,?)",
-                    (v, str(date.today()), concepto, coste, data, name)
-                )
-                st.success("Guardado")
-                st.rerun()
-
-    else:
-        st.warning("Primero crea un vehículo")
 
 # --- BACKUP ---
 elif menu == "💾 Backup":
 
-    st.markdown("### 💾 Copia de seguridad")
+    st.title("Backup")
 
-    with open(DB_NAME,"rb") as f:
-        st.download_button("⬇️ Descargar backup", f, "comasur_backup.db")
+    with open(DB,"rb") as f:
+        st.download_button("⬇️ Descargar", f, "backup.db")
 
-    st.markdown("### 🔄 Restaurar")
-
-    uploaded = st.file_uploader("Subir backup", type=["db"])
-
-    if uploaded:
-        with open(DB_NAME, "wb") as f:
-            f.write(uploaded.getbuffer())
-        st.success("Base de datos restaurada")
+    up = st.file_uploader("Restaurar", type=["db"])
+    if up:
+        with open(DB,"wb") as f:
+            f.write(up.getbuffer())
+        st.success("Restaurado")
         st.rerun()
