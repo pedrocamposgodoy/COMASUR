@@ -100,7 +100,6 @@ if menu == "📋 Flota":
 
     if not df.empty:
 
-        # --- TABLA EDITABLE ---
         st.markdown("### ✏️ Editar flota")
 
         df_edit = df[[
@@ -120,32 +119,42 @@ if menu == "📋 Flota":
             key="editor"
         )
 
-        # --- GUARDADO CORREGIDO ---
+        # --- CONTROL DE CAMBIOS ---
+        if "original_df" not in st.session_state:
+            st.session_state.original_df = df_edit.copy()
+
         if st.button("💾 Guardar cambios"):
-            for _, row in edited_df.iterrows():
 
-                fecha_itv = str(row["fecha_itv"]) if pd.notna(row["fecha_itv"]) else None
-                fecha_seguro = str(row["fecha_seguro"]) if pd.notna(row["fecha_seguro"]) else None
-                fecha_revision = str(row["fecha_revision"]) if pd.notna(row["fecha_revision"]) else None
+            cambios = edited_df.compare(st.session_state.original_df)
 
-                execute("""
-                UPDATE vehiculos SET 
-                modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=? 
-                WHERE matricula=?""",
-                (
-                    row["modelo"],
-                    row["ubicacion"],
-                    fecha_itv,
-                    fecha_seguro,
-                    fecha_revision,
-                    row["observaciones"],
-                    row["matricula"]
-                ))
+            if cambios.empty:
+                st.info("No hay cambios que guardar")
+            else:
+                for _, row in edited_df.iterrows():
 
-            st.success("Cambios guardados correctamente")
-            st.rerun()
+                    fecha_itv = str(row["fecha_itv"]) if pd.notna(row["fecha_itv"]) else None
+                    fecha_seguro = str(row["fecha_seguro"]) if pd.notna(row["fecha_seguro"]) else None
+                    fecha_revision = str(row["fecha_revision"]) if pd.notna(row["fecha_revision"]) else None
 
-        # --- ESTADO VISUAL ---
+                    execute("""
+                    UPDATE vehiculos SET 
+                    modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=? 
+                    WHERE matricula=?""",
+                    (
+                        row["modelo"],
+                        row["ubicacion"],
+                        fecha_itv,
+                        fecha_seguro,
+                        fecha_revision,
+                        row["observaciones"],
+                        row["matricula"]
+                    ))
+
+                st.success("Cambios guardados correctamente")
+                st.session_state.original_df = edited_df.copy()
+                st.rerun()
+
+        # --- ESTADO ---
         st.markdown("### 🚦 Estado de la flota")
 
         df_estado = pd.DataFrame({
