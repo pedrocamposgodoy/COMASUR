@@ -26,14 +26,12 @@ st.markdown("""
 .title { font-size: 18px; font-weight: 700; }
 .subtitle { color: #64748b; font-size: 14px; }
 
-/* TABLA PRO */
 div[data-testid="stDataFrame"] {
     background-color: white;
     border-radius: 12px;
     padding: 10px;
     border: 1px solid #e2e8f0;
 }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -117,16 +115,12 @@ if menu == "📋 Flota" and st.session_state.vehiculo_sel is None:
 
     df = get_df("SELECT * FROM vehiculos")
 
-    if df.empty:
-        st.warning("No hay vehículos")
-    else:
+    if not df.empty:
         cols = st.columns(3)
 
         for i, (_, v) in enumerate(df.iterrows()):
             with cols[i % 3]:
-
                 st.markdown('<div class="card">', unsafe_allow_html=True)
-
                 st.markdown(f"<div class='title'>🚐 {v['matricula']}</div>", unsafe_allow_html=True)
                 st.markdown(f"<div class='subtitle'>{v.get('marca','')} {v['modelo']}</div>", unsafe_allow_html=True)
 
@@ -140,11 +134,9 @@ if menu == "📋 Flota" and st.session_state.vehiculo_sel is None:
 
                 st.markdown('</div>', unsafe_allow_html=True)
 
-    # =====================================================
-    # 🔥 TABLA DE GASTOS ANUALES
-    # =====================================================
+    # --- TABLA GASTOS ---
     st.markdown("---")
-    st.markdown("## 💸 Gasto de mantenimiento (Año actual)")
+    st.markdown("## 💸 Gastos del año")
 
     year = datetime.today().year
 
@@ -157,24 +149,13 @@ if menu == "📋 Flota" and st.session_state.vehiculo_sel is None:
     """)
 
     if not df_gastos.empty:
+        st.metric("Total anual", f"{df_gastos['coste'].sum():.2f} €")
 
-        total = df_gastos["coste"].sum()
-
-        st.metric("💰 Total año", f"{total:,.2f} €")
-
-        df_gastos = df_gastos.rename(columns={
-            "fecha": "Fecha",
-            "matricula": "Matrícula",
-            "marca": "Marca",
-            "modelo": "Modelo",
-            "concepto": "Concepto",
-            "coste": "Coste (€)"
-        })
+        df_gastos.columns = ["Fecha","Matrícula","Marca","Modelo","Concepto","Coste (€)"]
 
         st.dataframe(df_gastos, use_container_width=True, hide_index=True)
-
     else:
-        st.info("No hay gastos registrados este año")
+        st.info("Sin gastos este año")
 
 # =====================================================
 # FICHA VEHÍCULO
@@ -191,6 +172,7 @@ elif st.session_state.vehiculo_sel:
         st.session_state.vehiculo_sel = None
         st.rerun()
 
+    # --- DATOS ---
     with st.form("edit"):
         marca = st.text_input("Marca", v.get("marca",""))
         modelo = st.text_input("Modelo", v["modelo"])
@@ -198,7 +180,7 @@ elif st.session_state.vehiculo_sel:
 
         itv = st.date_input("ITV", datetime.fromisoformat(v["fecha_itv"]) if v["fecha_itv"] else date.today())
         seguro = st.date_input("Seguro", datetime.fromisoformat(v["fecha_seguro"]) if v["fecha_seguro"] else date.today())
-        revision = st.date_input("Revisión", datetime.fromisoformat(v["fecha_revision"]) if v["fecha_revision"] else date.today())
+        revision = st.date_input("Revisión")
 
         obs = st.text_area("Observaciones", v["observaciones"])
 
@@ -209,21 +191,77 @@ elif st.session_state.vehiculo_sel:
             (marca, modelo, ubicacion, str(itv), str(seguro), str(revision), obs, mat))
             st.rerun()
 
-    # Mantenimiento igual que antes...
+    # =====================================================
+    # 🔧 MANTENIMIENTO (AQUÍ ESTÁ LO QUE FALTABA)
+    # =====================================================
+    st.markdown("## 🔧 Añadir mantenimiento")
+
+    with st.form("nuevo_mant"):
+        fecha = st.date_input("Fecha", value=date.today())
+        concepto = st.text_input("Concepto")
+        coste = st.number_input("Coste", 0.0)
+        file = st.file_uploader("Factura (PDF)")
+
+        data = file.getvalue() if file else None
+        name = file.name if file else None
+
+        if st.form_submit_button("Añadir mantenimiento"):
+            run(
+                "INSERT INTO mantenimientos (matricula,fecha,concepto,coste,factura,nombre_factura) VALUES (?,?,?,?,?,?)",
+                (mat, str(fecha), concepto, coste, data, name)
+            )
+            st.success("Mantenimiento añadido")
+            st.rerun()
+
+    # --- HISTORIAL ---
+    st.markdown("## 📋 Historial")
+
+    df_m = get_df(f"SELECT * FROM mantenimientos WHERE matricula='{mat}' ORDER BY fecha DESC")
+
+    if not df_m.empty:
+        for _, row in df_m.iterrows():
+
+            with st.expander(f"{row['fecha']} - {row['concepto']}"):
+
+                with st.form(f"edit_{row['id']}"):
+                    concepto = st.text_input("Concepto", row["concepto"])
+                    coste = st.number_input("Coste", value=float(row["coste"]))
+
+                    if row["factura"]:
+                        st.download_button("📄 Ver factura", row["factura"], row["nombre_factura"])
+
+                    c1, c2 = st.columns(2)
+
+                    if c1.form_submit_button("Guardar"):
+                        run("UPDATE mantenimientos SET concepto=?, coste=? WHERE id=?",
+                            (concepto, coste, row["id"]))
+                        st.rerun()
+
+                    if c2.form_submit_button("Borrar"):
+                        run("DELETE FROM mantenimientos WHERE id=?", (row["id"],))
+                        st.rerun()
+
+        st.metric("Total vehículo", f"{df_m['coste'].sum():.2f} €")
+    else:
+        st.info("Sin mantenimientos")
 
 # =====================================================
-# RESTO (igual)
+# NUEVO VEHÍCULO
 # =====================================================
 elif menu == "➕ Vehículo":
+
     st.title("Nuevo vehículo")
+
     with st.form("alta"):
         mat = st.text_input("Matrícula")
         marca = st.text_input("Marca")
         modelo = st.text_input("Modelo")
         ubi = st.selectbox("Ubicación", UBICACIONES)
+
         itv = st.date_input("ITV")
         seg = st.date_input("Seguro")
         rev = st.date_input("Revisión")
+
         obs = st.text_area("Observaciones")
 
         if st.form_submit_button("Crear"):
@@ -231,8 +269,13 @@ elif menu == "➕ Vehículo":
                 (mat, marca, modelo, ubi, str(itv), str(seg), str(rev), obs))
             st.rerun()
 
+# =====================================================
+# BACKUP
+# =====================================================
 elif menu == "💾 Backup":
+
     st.title("Backup")
+
     with open(DB,"rb") as f:
         st.download_button("Descargar", f, "backup.db")
 
@@ -240,4 +283,5 @@ elif menu == "💾 Backup":
     if up:
         with open(DB,"wb") as f:
             f.write(up.getbuffer())
+        st.success("Restaurado")
         st.rerun()
