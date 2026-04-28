@@ -1,86 +1,22 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timedelta
+import os
+import matplotlib.pyplot as plt
 
 # --- CONFIG ---
-st.set_page_config(
-    page_title="COMASUR Fleet Manager",
-    page_icon="🚚",
-    layout="wide"
-)
+st.set_page_config(page_title="COMASUR Fleet Manager", layout="wide")
 
-# --- 🎨 CSS (GRIS AZULADO PRO) ---
+DB_NAME = "comasur_flota.db"
+UBICACIONES = ["NAVE ALBOLOTE", "ZAIDIN", "MOTRIL", "MALAGA"]
+
+# --- CSS ---
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
-
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-}
-
-/* Fondo */
-.stApp {
-    background: linear-gradient(180deg, #e6edf5 0%, #dbe7f3 100%);
-    color: #0f172a;
-}
-
-/* Sidebar */
-[data-testid="stSidebar"] {
-    background: #f1f5f9;
-    border-right: 1px solid #cbd5e1;
-}
-
-/* Header */
-.header {
-    background: #ffffff;
-    border-radius: 16px;
-    padding: 20px;
-    margin-bottom: 20px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.05);
-}
-
-/* Tarjetas */
-div[data-testid="stForm"], div[data-testid="stExpander"] {
-    background: #ffffff;
-    border-radius: 16px;
-    padding: 20px;
-    box-shadow: 0 6px 25px rgba(15, 23, 42, 0.08);
-}
-
-/* Botones */
-div.stButton > button {
-    background: linear-gradient(135deg, #64748b, #94a3b8);
-    color: white;
-    border-radius: 10px;
-    border: none;
-    font-weight: 600;
-}
-
-/* Tabs */
-.stTabs [aria-selected="true"] {
-    color: #334155 !important;
-    border-bottom: 2px solid #334155;
-}
-
-/* Inputs */
-input, textarea, select {
-    background-color: #f8fafc !important;
-    color: #0f172a !important;
-    border: 1px solid #cbd5e1 !important;
-}
-
-/* Métricas */
-[data-testid="stMetricValue"] {
-    color: #1e293b;
-    font-size: 1.8rem;
-}
+.stApp {background: linear-gradient(180deg,#e6edf5,#dbe7f3);}
 </style>
 """, unsafe_allow_html=True)
-
-# --- CONFIG APP ---
-UBICACIONES = ["NAVE ALBOLOTE", "ZAIDIN", "MOTRIL", "MALAGA"]
-DB_NAME = "comasur_flota.db"
 
 # --- DB ---
 def init_db():
@@ -90,24 +26,18 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS vehiculos (
         matricula TEXT PRIMARY KEY,
         modelo TEXT,
-        fecha_compra TEXT,
-        vida_util INTEGER,
-        fecha_retirada TEXT,
         ubicacion TEXT,
-        tipo_mantenimiento TEXT,
-        caracteristicas TEXT,
-        prov_recambios TEXT
+        fecha_itv TEXT,
+        fecha_seguro TEXT
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS mantenimientos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         matricula TEXT,
         fecha TEXT,
-        operacion TEXT,
-        responsable TEXT,
-        seguro_ok BOOLEAN,
-        impuestos_ok BOOLEAN,
-        observaciones TEXT
+        concepto TEXT,
+        coste REAL,
+        factura TEXT
     )''')
 
     conn.commit()
@@ -115,110 +45,121 @@ def init_db():
 
 init_db()
 
-def execute_db(query, params=()):
+def execute(q, p=()):
     with sqlite3.connect(DB_NAME) as conn:
-        conn.execute(query, params)
+        conn.execute(q, p)
         conn.commit()
+
+# --- ALERTAS ---
+def get_estado(fecha):
+    if not fecha:
+        return "🟢 OK"
+    f = datetime.fromisoformat(fecha)
+    diff = (f - datetime.today()).days
+    if diff < 0:
+        return "🔴 Crítico"
+    elif diff < 30:
+        return "🟡 Revisar"
+    return "🟢 OK"
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.image("LOGO.png", use_container_width=True)
-    st.markdown("### COMASUR")
-    st.caption("Gestión de flota")
-
-    menu = st.radio("", [
-        "📋 Flota",
-        "➕ Nuevo Vehículo",
-        "🔧 Mantenimiento",
-        "💾 Backup"
-    ])
+    st.title("🚛 COMASUR")
+    menu = st.radio("", ["📋 Flota","➕ Vehículo","🔧 Mantenimiento","💾 Backup"])
 
 # --- HEADER ---
-st.markdown("""
-<div class="header">
-<h2>🚛 COMASUR Fleet Manager</h2>
-<p style="color:#64748b;">Control de vehículos y mantenimiento</p>
-</div>
-""", unsafe_allow_html=True)
+st.title("🚛 Fleet Manager")
 
-# --- FLOTAS ---
+# --- FLOTA ---
 if menu == "📋 Flota":
 
     df = pd.read_sql("SELECT * FROM vehiculos", sqlite3.connect(DB_NAME))
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Vehículos", len(df))
-    c2.metric("Ubicaciones", df["ubicacion"].nunique() if not df.empty else 0)
-    c3.metric("Estado", "Operativo")
+    alertas = []
+    for _, v in df.iterrows():
+        if get_estado(v["fecha_itv"]) != "🟢 OK":
+            alertas.append(f"ITV {v['matricula']}")
+        if get_estado(v["fecha_seguro"]) != "🟢 OK":
+            alertas.append(f"Seguro {v['matricula']}")
+
+    if alertas:
+        st.warning("🔔 Alertas: " + ", ".join(alertas))
 
     if not df.empty:
-        st.dataframe(df, use_container_width=True)
 
-        sel = st.selectbox("Seleccionar vehículo", df["matricula"])
-        v = df[df["matricula"] == sel].iloc[0]
+        df["Estado ITV"] = df["fecha_itv"].apply(get_estado)
+        df["Estado Seguro"] = df["fecha_seguro"].apply(get_estado)
 
-        tab1, tab2 = st.tabs(["Ficha", "Editar"])
+        st.dataframe(df)
 
-        with tab1:
-            st.metric("Modelo", v["modelo"])
-            st.metric("Ubicación", v["ubicacion"])
-            st.info(v["caracteristicas"])
+        # COSTES
+        df_m = pd.read_sql("SELECT * FROM mantenimientos", sqlite3.connect(DB_NAME))
+        df_m["fecha"] = pd.to_datetime(df_m["fecha"])
+        df_year = df_m[df_m["fecha"].dt.year == datetime.today().year]
 
-        with tab2:
-            with st.form("edit"):
-                mod = st.text_input("Modelo", v["modelo"])
-                ubi = st.selectbox("Ubicación", UBICACIONES, index=UBICACIONES.index(v["ubicacion"]) if v["ubicacion"] in UBICACIONES else 0)
-                car = st.text_area("Características", v["caracteristicas"])
+        st.metric("💸 Total año", f"{df_year['coste'].sum():.2f} €")
 
-                if st.form_submit_button("Guardar"):
-                    execute_db(
-                        "UPDATE vehiculos SET modelo=?, ubicacion=?, caracteristicas=? WHERE matricula=?",
-                        (mod, ubi, car, sel)
-                    )
-                    st.success("Actualizado")
-                    st.rerun()
+        # GRAFICO
+        if not df_year.empty:
+            grp = df_year.groupby("matricula")["coste"].sum()
+            fig, ax = plt.subplots()
+            grp.plot(kind="bar", ax=ax)
+            st.pyplot(fig)
+
+        # DETALLE VEHICULO
+        sel = st.selectbox("Vehículo", df["matricula"])
+        hist = df_m[df_m["matricula"] == sel]
+
+        st.markdown("### Historial")
+        st.dataframe(hist)
+
+        st.metric("Total vehículo", f"{hist['coste'].sum():.2f} €")
+
     else:
         st.warning("No hay vehículos")
 
-# --- ALTA ---
-elif menu == "➕ Nuevo Vehículo":
+# --- NUEVO ---
+elif menu == "➕ Vehículo":
 
     with st.form("alta"):
         mat = st.text_input("Matrícula")
         mod = st.text_input("Modelo")
         ubi = st.selectbox("Ubicación", UBICACIONES)
+        itv = st.date_input("ITV")
+        seg = st.date_input("Seguro")
 
         if st.form_submit_button("Crear"):
-            if mat and mod:
-                execute_db(
-                    "INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?,?,?)",
-                    (mat, mod, str(date.today()), 10, str(date.today()), ubi, "", "", "")
-                )
-                st.success("Vehículo creado")
-            else:
-                st.error("Faltan datos")
+            execute("INSERT INTO vehiculos VALUES (?,?,?,?,?)",
+                    (mat, mod, ubi, str(itv), str(seg)))
+            st.success("Creado")
 
 # --- MANTENIMIENTO ---
 elif menu == "🔧 Mantenimiento":
 
-    mats = pd.read_sql("SELECT matricula FROM vehiculos", sqlite3.connect(DB_NAME))["matricula"].tolist()
+    mats = pd.read_sql("SELECT matricula FROM vehiculos", sqlite3.connect(DB_NAME))["matricula"]
 
-    if mats:
+    if len(mats)>0:
+
         with st.form("mant"):
             v = st.selectbox("Vehículo", mats)
-            op = st.text_input("Operación")
+            concepto = st.text_input("Concepto")
+            coste = st.number_input("Coste", 0.0)
+            file = st.file_uploader("Factura PDF")
+
+            ruta = ""
+            if file:
+                os.makedirs("facturas", exist_ok=True)
+                ruta = f"facturas/{file.name}"
+                with open(ruta,"wb") as f:
+                    f.write(file.getbuffer())
 
             if st.form_submit_button("Guardar"):
-                execute_db(
-                    "INSERT INTO mantenimientos (matricula, fecha, operacion) VALUES (?,?,?)",
-                    (v, str(date.today()), op)
-                )
+                execute("INSERT INTO mantenimientos (matricula,fecha,concepto,coste,factura) VALUES (?,?,?,?,?)",
+                        (v, str(date.today()), concepto, coste, ruta))
                 st.success("Guardado")
-    else:
-        st.warning("No hay vehículos")
 
 # --- BACKUP ---
 elif menu == "💾 Backup":
 
-    with open(DB_NAME, "rb") as f:
-        st.download_button("Descargar copia", f, "backup.db")
+    with open(DB_NAME,"rb") as f:
+        st.download_button("Descargar DB", f, "backup.db")
