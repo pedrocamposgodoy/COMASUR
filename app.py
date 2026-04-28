@@ -26,7 +26,9 @@ def init_db():
         modelo TEXT,
         ubicacion TEXT,
         fecha_itv TEXT,
-        fecha_seguro TEXT
+        fecha_seguro TEXT,
+        fecha_revision TEXT,
+        observaciones TEXT
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS mantenimientos (
@@ -60,18 +62,13 @@ def estado(fecha):
 
 # --- SIDEBAR ---
 with st.sidebar:
-    try:
-        st.image("LOGO.png", use_container_width=True)
-    except:
-        st.write("Sube LOGO.png")
-
-    st.markdown("### COMASUR")
+    st.image("LOGO.png", use_container_width=True)
     menu = st.radio("", ["📋 Flota","➕ Vehículo","🔧 Mantenimiento","💾 Backup"])
 
 # --- HEADER ---
-st.markdown("## 🚛 Fleet Manager")
+st.title("🚛 COMASUR Fleet Manager")
 
-# --- FLOTA ---
+# --- FLOTAS ---
 if menu == "📋 Flota":
 
     df = pd.read_sql("SELECT * FROM vehiculos", sqlite3.connect(DB_NAME))
@@ -79,60 +76,64 @@ if menu == "📋 Flota":
     # ALERTAS
     alertas = []
     for _, v in df.iterrows():
-        if estado(v["fecha_itv"]) != "🟢 OK":
-            alertas.append(f"ITV {v['matricula']}")
-        if estado(v["fecha_seguro"]) != "🟢 OK":
-            alertas.append(f"Seguro {v['matricula']}")
+        for campo in ["fecha_itv","fecha_seguro","fecha_revision"]:
+            if estado(v[campo]) != "🟢 OK":
+                alertas.append(f"{campo.replace('fecha_','').upper()} {v['matricula']}")
 
     if alertas:
-        st.warning("🔔 Alertas: " + ", ".join(alertas))
+        st.warning("🔔 " + " | ".join(alertas))
 
     if not df.empty:
 
         df["ITV"] = df["fecha_itv"].apply(estado)
         df["Seguro"] = df["fecha_seguro"].apply(estado)
+        df["Revisión"] = df["fecha_revision"].apply(estado)
 
         st.dataframe(df, use_container_width=True)
 
-        # COSTES
-        df_m = pd.read_sql("SELECT * FROM mantenimientos", sqlite3.connect(DB_NAME))
+        # SELECCIÓN PARA EDITAR
+        sel = st.selectbox("Seleccionar vehículo para editar", df["matricula"])
+        v = df[df["matricula"] == sel].iloc[0]
+
+        st.markdown("### ✏️ Editar ficha")
+
+        with st.form("edit"):
+            mod = st.text_input("Modelo", v["modelo"])
+            ubi = st.selectbox("Ubicación", UBICACIONES, index=UBICACIONES.index(v["ubicacion"]))
+            itv = st.date_input("ITV", value=pd.to_datetime(v["fecha_itv"]))
+            seg = st.date_input("Seguro", value=pd.to_datetime(v["fecha_seguro"]))
+            rev = st.date_input("Próxima revisión", value=pd.to_datetime(v["fecha_revision"]))
+            obs = st.text_area("Observaciones", v["observaciones"])
+
+            if st.form_submit_button("Guardar cambios"):
+                execute("""
+                UPDATE vehiculos SET modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=? 
+                WHERE matricula=?""",
+                (mod, ubi, str(itv), str(seg), str(rev), obs, sel))
+
+                st.success("Actualizado")
+                st.rerun()
+
+        # HISTORIAL
+        df_m = pd.read_sql(f"SELECT * FROM mantenimientos WHERE matricula='{sel}'", sqlite3.connect(DB_NAME))
+
+        st.markdown("### 📋 Historial")
+
         if not df_m.empty:
-            df_m["fecha"] = pd.to_datetime(df_m["fecha"])
-            df_year = df_m[df_m["fecha"].dt.year == datetime.today().year]
-
-            st.metric("💸 Total año", f"{df_year['coste'].sum():.2f} €")
-
-        # DETALLE VEHICULO
-        sel = st.selectbox("Seleccionar vehículo", df["matricula"])
-        hist = df_m[df_m["matricula"] == sel] if not df_m.empty else pd.DataFrame()
-
-        st.markdown("### Historial de mantenimiento")
-
-        if not hist.empty:
-            for _, row in hist.iterrows():
-                c1, c2, c3, c4 = st.columns([2,3,2,2])
-
+            for _, row in df_m.iterrows():
+                c1,c2,c3,c4 = st.columns([2,3,2,2])
                 c1.write(row["fecha"])
                 c2.write(row["concepto"])
                 c3.write(f"{row['coste']} €")
 
                 if row["factura"]:
-                    c4.download_button(
-                        "📄 Factura",
-                        row["factura"],
-                        file_name=row["nombre_factura"]
-                    )
+                    c4.download_button("📄 Factura", row["factura"], row["nombre_factura"])
                 else:
                     c4.write("—")
 
-            st.metric("Total vehículo", f"{hist['coste'].sum():.2f} €")
-        else:
-            st.info("Sin mantenimientos")
+            st.metric("💸 Total vehículo", f"{df_m['coste'].sum():.2f} €")
 
-    else:
-        st.warning("No hay vehículos")
-
-# --- NUEVO ---
+# --- NUEVO VEHÍCULO ---
 elif menu == "➕ Vehículo":
 
     with st.form("alta"):
@@ -141,13 +142,16 @@ elif menu == "➕ Vehículo":
         ubi = st.selectbox("Ubicación", UBICACIONES)
         itv = st.date_input("ITV")
         seg = st.date_input("Seguro")
+        rev = st.date_input("Próxima revisión")
+        obs = st.text_area("Observaciones")
 
         if st.form_submit_button("Crear"):
             execute(
-                "INSERT INTO vehiculos VALUES (?,?,?,?,?)",
-                (mat, mod, ubi, str(itv), str(seg))
+                "INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?)",
+                (mat, mod, ubi, str(itv), str(seg), str(rev), obs)
             )
             st.success("Vehículo creado")
+            st.rerun()  # 👈 CIERRA "DIALOGO"
 
 # --- MANTENIMIENTO ---
 elif menu == "🔧 Mantenimiento":
@@ -160,31 +164,25 @@ elif menu == "🔧 Mantenimiento":
             v = st.selectbox("Vehículo", mats)
             concepto = st.text_input("Concepto")
             coste = st.number_input("Coste", 0.0)
-            file = st.file_uploader("Factura (PDF)", type=["pdf"])
+            file = st.file_uploader("Factura PDF")
 
-            file_bytes = None
-            file_name = ""
+            data = None
+            name = ""
 
             if file:
-                file_bytes = file.getvalue()
-                file_name = file.name
+                data = file.getvalue()
+                name = file.name
 
             if st.form_submit_button("Guardar"):
                 execute(
                     "INSERT INTO mantenimientos (matricula,fecha,concepto,coste,factura,nombre_factura) VALUES (?,?,?,?,?,?)",
-                    (v, str(date.today()), concepto, coste, file_bytes, file_name)
+                    (v, str(date.today()), concepto, coste, data, name)
                 )
                 st.success("Guardado")
-
-    else:
-        st.warning("Primero crea un vehículo")
+                st.rerun()
 
 # --- BACKUP ---
 elif menu == "💾 Backup":
 
-    with open(DB_NAME, "rb") as f:
-        st.download_button(
-            "⬇️ Descargar copia de seguridad",
-            f,
-            "comasur_backup.db"
-        )
+    with open(DB_NAME,"rb") as f:
+        st.download_button("⬇️ Backup", f, "backup.db")
