@@ -71,6 +71,30 @@ def estado(fecha):
     else:
         return "🟢 OK"
 
+# --- FUNCIÓN GUARDADO AUTOMÁTICO ---
+def guardar_cambios():
+    edited_df = st.session_state["editor"]
+
+    for _, row in edited_df.iterrows():
+
+        fecha_itv = str(row["fecha_itv"]) if pd.notna(row["fecha_itv"]) else None
+        fecha_seguro = str(row["fecha_seguro"]) if pd.notna(row["fecha_seguro"]) else None
+        fecha_revision = str(row["fecha_revision"]) if pd.notna(row["fecha_revision"]) else None
+
+        execute("""
+        UPDATE vehiculos SET 
+        modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=? 
+        WHERE matricula=?""",
+        (
+            row["modelo"],
+            row["ubicacion"],
+            fecha_itv,
+            fecha_seguro,
+            fecha_revision,
+            row["observaciones"],
+            row["matricula"]
+        ))
+
 # --- SIDEBAR ---
 with st.sidebar:
     try:
@@ -100,7 +124,7 @@ if menu == "📋 Flota":
 
     if not df.empty:
 
-        st.markdown("### ✏️ Editar flota")
+        st.markdown("### ✏️ Editar flota (auto-guardado)")
 
         df_edit = df[[
             "matricula",
@@ -112,47 +136,15 @@ if menu == "📋 Flota":
             "observaciones"
         ]].copy()
 
-        edited_df = st.data_editor(
+        st.data_editor(
             df_edit,
             use_container_width=True,
             num_rows="dynamic",
-            key="editor"
+            key="editor",
+            on_change=guardar_cambios
         )
 
-        # --- CONTROL DE CAMBIOS ---
-        if "original_df" not in st.session_state:
-            st.session_state.original_df = df_edit.copy()
-
-        if st.button("💾 Guardar cambios"):
-
-            cambios = edited_df.compare(st.session_state.original_df)
-
-            if cambios.empty:
-                st.info("No hay cambios que guardar")
-            else:
-                for _, row in edited_df.iterrows():
-
-                    fecha_itv = str(row["fecha_itv"]) if pd.notna(row["fecha_itv"]) else None
-                    fecha_seguro = str(row["fecha_seguro"]) if pd.notna(row["fecha_seguro"]) else None
-                    fecha_revision = str(row["fecha_revision"]) if pd.notna(row["fecha_revision"]) else None
-
-                    execute("""
-                    UPDATE vehiculos SET 
-                    modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=? 
-                    WHERE matricula=?""",
-                    (
-                        row["modelo"],
-                        row["ubicacion"],
-                        fecha_itv,
-                        fecha_seguro,
-                        fecha_revision,
-                        row["observaciones"],
-                        row["matricula"]
-                    ))
-
-                st.success("Cambios guardados correctamente")
-                st.session_state.original_df = edited_df.copy()
-                st.rerun()
+        st.success("💾 Cambios guardados automáticamente")
 
         # --- ESTADO ---
         st.markdown("### 🚦 Estado de la flota")
