@@ -1,188 +1,118 @@
 import streamlit as st
-import pandas as pd
-import sqlite3
-from datetime import date, datetime
 
-# --- CONFIG ---
-st.set_page_config(page_title="COMASUR Fleet Manager", layout="wide")
+# Configuración de la página
+st.set_page_config(page_title="Mis Medicamentos", layout="centered")
 
-DB_NAME = "comasur_flota.db"
-UBICACIONES = ["NAVE ALBOLOTE", "ZAIDIN", "MOTRIL", "MALAGA"]
-
-# --- ESTILO ---
+# Estilos CSS personalizados para maximizar legibilidad y tamaño de botones
 st.markdown("""
-<style>
-.stApp {background: linear-gradient(180deg,#e6edf5,#dbe7f3);}
-</style>
+    <style>
+    /* Tamaño de fuente global y botones */
+    html, body, [class*="st-"] {
+        font-size: 24px !important;
+    }
+    
+    .stButton button {
+        height: 4em !important;
+        width: 100% !important;
+        font-size: 26px !important;
+        font-weight: bold !important;
+        border-radius: 15px !important;
+        margin-top: 10px !important;
+        margin-bottom: 10px !important;
+        border: 2px solid #2e2e2e !important;
+    }
+
+    /* Títulos grandes */
+    h1 {
+        font-size: 50px !important;
+        text-align: center;
+        color: #1a1a1a;
+    }
+
+    /* Estilo de las tarjetas de medicamentos */
+    .med-card {
+        padding: 25px;
+        border-radius: 20px;
+        background-color: #f9f9f9;
+        border: 1px solid #ddd;
+        margin-bottom: 10px;
+    }
+    
+    /* Input más grande */
+    input {
+        font-size: 22px !important;
+    }
+    </style>
 """, unsafe_allow_html=True)
 
-# --- DB ---
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
+# Inicializar el estado de la aplicación
+if 'medicamentos' not in st.session_state:
+    st.session_state.medicamentos = [
+        {'nombre': 'Paracetamol', 'dosis': 'Mañana', 'cantidad': 12},
+        {'nombre': 'Aspirina', 'dosis': 'Noche', 'cantidad': 5}
+    ]
 
-    c.execute('''CREATE TABLE IF NOT EXISTS vehiculos (
-        matricula TEXT PRIMARY KEY,
-        modelo TEXT,
-        ubicacion TEXT,
-        fecha_itv TEXT,
-        fecha_seguro TEXT,
-        fecha_revision TEXT,
-        observaciones TEXT
-    )''')
+if 'mostrar_formulario' not in st.session_state:
+    st.session_state.mostrar_formulario = False
 
-    c.execute('''CREATE TABLE IF NOT EXISTS mantenimientos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        matricula TEXT,
-        fecha TEXT,
-        concepto TEXT,
-        coste REAL,
-        factura BLOB,
-        nombre_factura TEXT
-    )''')
+# TÍTULO PRINCIPAL
+st.write("# 💊 Mis medicamentos")
 
-    conn.commit()
-    conn.close()
+# BOTÓN AÑADIR (Alterna la visibilidad del formulario)
+if st.button("➕ Añadir medicamento"):
+    st.session_state.mostrar_formulario = not st.session_state.mostrar_formulario
 
-init_db()
-
-def execute(q, p=()):
-    with sqlite3.connect(DB_NAME) as conn:
-        conn.execute(q, p)
-        conn.commit()
-
-# --- ESTADO ---
-def estado(fecha):
-    if not fecha:
-        return "🟢 OK"
-    diff = (datetime.fromisoformat(fecha) - datetime.today()).days
-    if diff < 0: return "🔴 Crítico"
-    if diff < 30: return "🟡 Revisar"
-    return "🟢 OK"
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.image("LOGO.png", use_container_width=True)
-    menu = st.radio("", ["📋 Flota","➕ Vehículo","🔧 Mantenimiento","💾 Backup"])
-
-# --- HEADER ---
-st.title("🚛 COMASUR Fleet Manager")
-
-# --- FLOTAS ---
-if menu == "📋 Flota":
-
-    df = pd.read_sql("SELECT * FROM vehiculos", sqlite3.connect(DB_NAME))
-
-    # ALERTAS
-    alertas = []
-    for _, v in df.iterrows():
-        for campo in ["fecha_itv","fecha_seguro","fecha_revision"]:
-            if estado(v[campo]) != "🟢 OK":
-                alertas.append(f"{campo.replace('fecha_','').upper()} {v['matricula']}")
-
-    if alertas:
-        st.warning("🔔 " + " | ".join(alertas))
-
-    if not df.empty:
-
-        df["ITV"] = df["fecha_itv"].apply(estado)
-        df["Seguro"] = df["fecha_seguro"].apply(estado)
-        df["Revisión"] = df["fecha_revision"].apply(estado)
-
-        st.dataframe(df, use_container_width=True)
-
-        # SELECCIÓN PARA EDITAR
-        sel = st.selectbox("Seleccionar vehículo para editar", df["matricula"])
-        v = df[df["matricula"] == sel].iloc[0]
-
-        st.markdown("### ✏️ Editar ficha")
-
-        with st.form("edit"):
-            mod = st.text_input("Modelo", v["modelo"])
-            ubi = st.selectbox("Ubicación", UBICACIONES, index=UBICACIONES.index(v["ubicacion"]))
-            itv = st.date_input("ITV", value=pd.to_datetime(v["fecha_itv"]))
-            seg = st.date_input("Seguro", value=pd.to_datetime(v["fecha_seguro"]))
-            rev = st.date_input("Próxima revisión", value=pd.to_datetime(v["fecha_revision"]))
-            obs = st.text_area("Observaciones", v["observaciones"])
-
-            if st.form_submit_button("Guardar cambios"):
-                execute("""
-                UPDATE vehiculos SET modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=? 
-                WHERE matricula=?""",
-                (mod, ubi, str(itv), str(seg), str(rev), obs, sel))
-
-                st.success("Actualizado")
+# Formulario simple para añadir (solo aparece al pulsar el botón)
+if st.session_state.mostrar_formulario:
+    with st.container():
+        nuevo_nombre = st.text_input("Nombre del medicamento:", placeholder="Ej: Ibuprofeno")
+        nueva_dosis = st.selectbox("¿Cuándo se toma?", ["Mañana", "Tarde", "Noche", "Cada 8 horas"])
+        nueva_cant = st.number_input("¿Cuántas pastillas tiene?", min_value=1, value=10)
+        
+        if st.button("💾 GUARDAR"):
+            if nuevo_nombre:
+                st.session_state.medicamentos.append({
+                    'nombre': nuevo_nombre,
+                    'dosis': nueva_dosis,
+                    'cantidad': nueva_cant
+                })
+                st.session_state.mostrar_formulario = False
                 st.rerun()
 
-        # HISTORIAL
-        df_m = pd.read_sql(f"SELECT * FROM mantenimientos WHERE matricula='{sel}'", sqlite3.connect(DB_NAME))
+st.markdown("---")
 
-        st.markdown("### 📋 Historial")
+# LISTA DE MEDICAMENTOS
+if not st.session_state.medicamentos:
+    st.write("No hay medicamentos en la lista.")
+else:
+    for i, med in enumerate(st.session_state.medicamentos):
+        # Contenedor visual tipo tarjeta
+        with st.container():
+            # Título y detalles
+            st.markdown(f"## **{med['nombre']}**")
+            st.write(f"🕒 Dosis: **{med['dosis']}**")
+            st.write(f"📦 Quedan: **{med['cantidad']}** pastillas")
+            
+            # Botones de acción
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button(f"✔️ Tomado", key=f"tomar_{i}"):
+                    if st.session_state.medicamentos[i]['cantidad'] > 0:
+                        st.session_state.medicamentos[i]['cantidad'] -= 1
+                        st.rerun()
+            
+            with col2:
+                if st.button(f"🛒 Comprar", key=f"comprar_{i}"):
+                    # Añade un paquete estándar de 10 o 20
+                    st.session_state.medicamentos[i]['cantidad'] += 20
+                    st.rerun()
+            
+            # Separador visual entre tarjetas
+            st.markdown("---")
 
-        if not df_m.empty:
-            for _, row in df_m.iterrows():
-                c1,c2,c3,c4 = st.columns([2,3,2,2])
-                c1.write(row["fecha"])
-                c2.write(row["concepto"])
-                c3.write(f"{row['coste']} €")
-
-                if row["factura"]:
-                    c4.download_button("📄 Factura", row["factura"], row["nombre_factura"])
-                else:
-                    c4.write("—")
-
-            st.metric("💸 Total vehículo", f"{df_m['coste'].sum():.2f} €")
-
-# --- NUEVO VEHÍCULO ---
-elif menu == "➕ Vehículo":
-
-    with st.form("alta"):
-        mat = st.text_input("Matrícula")
-        mod = st.text_input("Modelo")
-        ubi = st.selectbox("Ubicación", UBICACIONES)
-        itv = st.date_input("ITV")
-        seg = st.date_input("Seguro")
-        rev = st.date_input("Próxima revisión")
-        obs = st.text_area("Observaciones")
-
-        if st.form_submit_button("Crear"):
-            execute(
-                "INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?)",
-                (mat, mod, ubi, str(itv), str(seg), str(rev), obs)
-            )
-            st.success("Vehículo creado")
-            st.rerun()  # 👈 CIERRA "DIALOGO"
-
-# --- MANTENIMIENTO ---
-elif menu == "🔧 Mantenimiento":
-
-    mats = pd.read_sql("SELECT matricula FROM vehiculos", sqlite3.connect(DB_NAME))["matricula"]
-
-    if len(mats) > 0:
-
-        with st.form("mant"):
-            v = st.selectbox("Vehículo", mats)
-            concepto = st.text_input("Concepto")
-            coste = st.number_input("Coste", 0.0)
-            file = st.file_uploader("Factura PDF")
-
-            data = None
-            name = ""
-
-            if file:
-                data = file.getvalue()
-                name = file.name
-
-            if st.form_submit_button("Guardar"):
-                execute(
-                    "INSERT INTO mantenimientos (matricula,fecha,concepto,coste,factura,nombre_factura) VALUES (?,?,?,?,?,?)",
-                    (v, str(date.today()), concepto, coste, data, name)
-                )
-                st.success("Guardado")
-                st.rerun()
-
-# --- BACKUP ---
-elif menu == "💾 Backup":
-
-    with open(DB_NAME,"rb") as f:
-        st.download_button("⬇️ Backup", f, "backup.db")
+# Botón extra al final para limpiar todo (opcional para pruebas)
+if st.checkbox("Mostrar opciones de borrado"):
+    if st.button("🗑️ Borrar toda la lista"):
+        st.session_state.medicamentos = []
+        st.rerun()
