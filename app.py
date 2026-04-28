@@ -55,14 +55,21 @@ def execute(q, p=()):
         conn.execute(q, p)
         conn.commit()
 
-# --- ESTADO ---
+# --- ESTADO REALISTA ---
 def estado(fecha):
     if not fecha:
         return "🟢 OK"
+
     diff = (datetime.fromisoformat(str(fecha)) - datetime.today()).days
-    if diff < 0: return "🔴 Crítico"
-    if diff < 30: return "🟡 Revisar"
-    return "🟢 OK"
+
+    if diff < 0:
+        return "🔴 Crítico"
+    elif diff < 30:
+        return "🔴 Urgente"
+    elif diff < 120:
+        return "🟡 Revisar"
+    else:
+        return "🟢 OK"
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -228,5 +235,17 @@ elif menu == "🔧 Mantenimiento":
 # --- BACKUP ---
 elif menu == "💾 Backup":
 
+    st.markdown("### 💾 Copia de seguridad")
+
     with open(DB_NAME,"rb") as f:
         st.download_button("⬇️ Descargar backup", f, "comasur_backup.db")
+
+    st.markdown("### 🔄 Restaurar")
+
+    uploaded = st.file_uploader("Subir backup", type=["db"])
+
+    if uploaded:
+        with open(DB_NAME, "wb") as f:
+            f.write(uploaded.getbuffer())
+        st.success("Base de datos restaurada")
+        st.rerun()
