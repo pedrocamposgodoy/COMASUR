@@ -12,9 +12,7 @@ UBICACIONES = ["NAVE ALBOLOTE", "ZAIDIN", "MOTRIL", "MALAGA"]
 # --- ESTILO ---
 st.markdown("""
 <style>
-.stApp {
-    background: linear-gradient(180deg,#eef3f9,#dbe7f3);
-}
+.stApp { background: linear-gradient(180deg,#eef3f9,#dbe7f3); }
 .card {
     background-color: white;
     padding: 20px;
@@ -25,7 +23,6 @@ st.markdown("""
 }
 .title { font-size: 18px; font-weight: 700; }
 .subtitle { color: #64748b; font-size: 14px; }
-.stButton button { border-radius: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,6 +33,7 @@ def init_db():
 
     c.execute('''CREATE TABLE IF NOT EXISTS vehiculos (
         matricula TEXT PRIMARY KEY,
+        marca TEXT,
         modelo TEXT,
         ubicacion TEXT,
         fecha_itv TEXT,
@@ -43,6 +41,12 @@ def init_db():
         fecha_revision TEXT,
         observaciones TEXT
     )''')
+
+    # 🔥 MIGRACIÓN automática
+    try:
+        c.execute("ALTER TABLE vehiculos ADD COLUMN marca TEXT")
+    except:
+        pass
 
     c.execute('''CREATE TABLE IF NOT EXISTS mantenimientos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,10 +69,7 @@ def run(q, p=()):
         conn.commit()
 
 def get_df(query):
-    conn = sqlite3.connect(DB)
-    df = pd.read_sql(query, conn)
-    conn.close()
-    return df
+    return pd.read_sql(query, sqlite3.connect(DB))
 
 # --- ESTADO ---
 def estado(fecha):
@@ -112,9 +113,12 @@ if menu == "📋 Flota" and st.session_state.vehiculo_sel is None:
 
         for i, (_, v) in enumerate(df.iterrows()):
             with cols[i % 3]:
+
                 st.markdown('<div class="card">', unsafe_allow_html=True)
+
                 st.markdown(f"<div class='title'>🚐 {v['matricula']}</div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='subtitle'>{v['modelo']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='subtitle'>{v.get('marca','')} {v['modelo']}</div>", unsafe_allow_html=True)
+
                 st.write(f"📍 {v['ubicacion']}")
                 st.write(f"ITV: {estado(v['fecha_itv'])}")
                 st.write(f"Seguro: {estado(v['fecha_seguro'])}")
@@ -126,7 +130,7 @@ if menu == "📋 Flota" and st.session_state.vehiculo_sel is None:
                 st.markdown('</div>', unsafe_allow_html=True)
 
 # =====================================================
-# FICHA VEHÍCULO
+# FICHA
 # =====================================================
 elif st.session_state.vehiculo_sel:
 
@@ -134,18 +138,18 @@ elif st.session_state.vehiculo_sel:
     df = get_df(f"SELECT * FROM vehiculos WHERE matricula='{old_mat}'")
     v = df.iloc[0]
 
-    st.title(f"🚐 Ficha {old_mat}")
+    st.title(f"🚐 {old_mat}")
 
     if st.button("⬅️ Volver"):
         st.session_state.vehiculo_sel = None
         st.rerun()
 
-    st.markdown("### ✏️ Editar vehículo")
-
-    with st.form("editar"):
+    with st.form("edit"):
 
         nueva_mat = st.text_input("Matrícula", v["matricula"])
+        marca = st.text_input("Marca", v.get("marca",""))
         modelo = st.text_input("Modelo", v["modelo"])
+
         ubicacion = st.selectbox("Ubicación", UBICACIONES, index=UBICACIONES.index(v["ubicacion"]))
 
         itv = st.date_input("ITV", datetime.fromisoformat(v["fecha_itv"]) if v["fecha_itv"] else date.today())
@@ -154,77 +158,56 @@ elif st.session_state.vehiculo_sel:
 
         obs = st.text_area("Observaciones", v["observaciones"])
 
-        if st.form_submit_button("Guardar cambios"):
+        if st.form_submit_button("Guardar"):
 
-            # VALIDACIÓN
-            existe = get_df(f"SELECT * FROM vehiculos WHERE matricula='{nueva_mat}'")
-            if nueva_mat != old_mat and not existe.empty:
-                st.error("Ya existe esa matrícula")
-            else:
-                # UPDATE VEHICULO
-                run("""
-                UPDATE vehiculos SET matricula=?, modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=?
-                WHERE matricula=?""",
-                (nueva_mat, modelo, ubicacion, str(itv), str(seguro), str(revision), obs, old_mat))
+            run("""
+            UPDATE vehiculos SET matricula=?, marca=?, modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=?
+            WHERE matricula=?""",
+            (nueva_mat, marca, modelo, ubicacion, str(itv), str(seguro), str(revision), obs, old_mat))
 
-                # UPDATE MANTENIMIENTOS
-                run("UPDATE mantenimientos SET matricula=? WHERE matricula=?", (nueva_mat, old_mat))
+            run("UPDATE mantenimientos SET matricula=? WHERE matricula=?", (nueva_mat, old_mat))
 
-                st.session_state.vehiculo_sel = nueva_mat
-                st.success("Actualizado correctamente")
-                st.rerun()
+            st.session_state.vehiculo_sel = nueva_mat
+            st.success("Guardado")
+            st.rerun()
 
     # --- MANTENIMIENTO ---
-    st.markdown("### 🔧 Añadir mantenimiento")
+    st.markdown("### 🔧 Mantenimiento")
 
     with st.form("mant"):
         concepto = st.text_input("Concepto")
         coste = st.number_input("Coste", 0.0)
-        file = st.file_uploader("Factura PDF")
+        file = st.file_uploader("Factura")
 
         data = file.getvalue() if file else None
         name = file.name if file else None
 
-        if st.form_submit_button("Guardar mantenimiento"):
-            run(
-                "INSERT INTO mantenimientos (matricula,fecha,concepto,coste,factura,nombre_factura) VALUES (?,?,?,?,?,?)",
-                (st.session_state.vehiculo_sel, str(date.today()), concepto, coste, data, name)
-            )
-            st.success("Añadido")
+        if st.form_submit_button("Añadir"):
+            run("INSERT INTO mantenimientos (matricula,fecha,concepto,coste,factura,nombre_factura) VALUES (?,?,?,?,?,?)",
+                (st.session_state.vehiculo_sel, str(date.today()), concepto, coste, data, name))
             st.rerun()
-
-    # --- HISTORIAL ---
-    st.markdown("### 📋 Historial")
 
     df_m = get_df(f"SELECT * FROM mantenimientos WHERE matricula='{st.session_state.vehiculo_sel}'")
 
-    if not df_m.empty:
-        for _, row in df_m.iterrows():
+    for _, row in df_m.iterrows():
+        with st.expander(f"{row['fecha']} - {row['concepto']}"):
+            with st.form(f"edit_{row['id']}"):
+                concepto = st.text_input("Concepto", row["concepto"])
+                coste = st.number_input("Coste", value=float(row["coste"]))
 
-            with st.expander(f"{row['fecha']} - {row['concepto']}"):
+                if row["factura"]:
+                    st.download_button("Factura", row["factura"], row["nombre_factura"])
 
-                with st.form(f"edit_{row['id']}"):
+                c1, c2 = st.columns(2)
 
-                    concepto = st.text_input("Concepto", row["concepto"])
-                    coste = st.number_input("Coste", value=float(row["coste"]))
+                if c1.form_submit_button("Guardar"):
+                    run("UPDATE mantenimientos SET concepto=?, coste=? WHERE id=?",
+                        (concepto, coste, row["id"]))
+                    st.rerun()
 
-                    if row["factura"]:
-                        st.download_button("📄 Factura", row["factura"], row["nombre_factura"])
-
-                    c1, c2 = st.columns(2)
-
-                    if c1.form_submit_button("💾 Guardar"):
-                        run("UPDATE mantenimientos SET concepto=?, coste=? WHERE id=?",
-                            (concepto, coste, row["id"]))
-                        st.rerun()
-
-                    if c2.form_submit_button("🗑️ Borrar"):
-                        run("DELETE FROM mantenimientos WHERE id=?", (row["id"],))
-                        st.rerun()
-
-        st.metric("💸 Total", f"{df_m['coste'].sum():.2f} €")
-    else:
-        st.info("Sin mantenimientos")
+                if c2.form_submit_button("Borrar"):
+                    run("DELETE FROM mantenimientos WHERE id=?", (row["id"],))
+                    st.rerun()
 
 # =====================================================
 # NUEVO VEHÍCULO
@@ -235,16 +218,19 @@ elif menu == "➕ Vehículo":
 
     with st.form("alta"):
         mat = st.text_input("Matrícula")
-        mod = st.text_input("Modelo")
+        marca = st.text_input("Marca")
+        modelo = st.text_input("Modelo")
         ubi = st.selectbox("Ubicación", UBICACIONES)
+
         itv = st.date_input("ITV")
         seg = st.date_input("Seguro")
         rev = st.date_input("Revisión")
+
         obs = st.text_area("Observaciones")
 
         if st.form_submit_button("Crear"):
-            run("INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?)",
-                (mat, mod, ubi, str(itv), str(seg), str(rev), obs))
+            run("INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?,?)",
+                (mat, marca, modelo, ubi, str(itv), str(seg), str(rev), obs))
             st.success("Vehículo creado")
             st.rerun()
 
