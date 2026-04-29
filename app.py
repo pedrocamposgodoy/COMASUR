@@ -121,6 +121,7 @@ if menu == "📋 Flota" and st.session_state.vehiculo_sel is None:
         for i, (_, v) in enumerate(df.iterrows()):
             with cols[i % 3]:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
+
                 st.markdown(f"<div class='title'>🚐 {v['matricula']}</div>", unsafe_allow_html=True)
                 st.markdown(f"<div class='subtitle'>{v.get('marca','')} {v['modelo']}</div>", unsafe_allow_html=True)
 
@@ -134,7 +135,7 @@ if menu == "📋 Flota" and st.session_state.vehiculo_sel is None:
 
                 st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- TABLA GASTOS ---
+    # --- GASTOS ANUALES ---
     st.markdown("---")
     st.markdown("## 💸 Gastos del año")
 
@@ -172,7 +173,7 @@ elif st.session_state.vehiculo_sel:
         st.session_state.vehiculo_sel = None
         st.rerun()
 
-    # --- DATOS ---
+    # --- EDITAR VEHÍCULO ---
     with st.form("edit"):
         marca = st.text_input("Marca", v.get("marca",""))
         modelo = st.text_input("Modelo", v["modelo"])
@@ -189,11 +190,10 @@ elif st.session_state.vehiculo_sel:
             UPDATE vehiculos SET marca=?, modelo=?, ubicacion=?, fecha_itv=?, fecha_seguro=?, fecha_revision=?, observaciones=? 
             WHERE matricula=?""",
             (marca, modelo, ubicacion, str(itv), str(seguro), str(revision), obs, mat))
+            st.success("Guardado")
             st.rerun()
 
-    # =====================================================
-    # 🔧 MANTENIMIENTO (AQUÍ ESTÁ LO QUE FALTABA)
-    # =====================================================
+    # --- AÑADIR MANTENIMIENTO ---
     st.markdown("## 🔧 Añadir mantenimiento")
 
     with st.form("nuevo_mant"):
@@ -220,9 +220,7 @@ elif st.session_state.vehiculo_sel:
 
     if not df_m.empty:
         for _, row in df_m.iterrows():
-
             with st.expander(f"{row['fecha']} - {row['concepto']}"):
-
                 with st.form(f"edit_{row['id']}"):
                     concepto = st.text_input("Concepto", row["concepto"])
                     coste = st.number_input("Coste", value=float(row["coste"]))
@@ -261,13 +259,22 @@ elif menu == "➕ Vehículo":
         itv = st.date_input("ITV")
         seg = st.date_input("Seguro")
         rev = st.date_input("Revisión")
-
         obs = st.text_area("Observaciones")
 
         if st.form_submit_button("Crear"):
-            run("INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?,?)",
-                (mat, marca, modelo, ubi, str(itv), str(seg), str(rev), obs))
-            st.rerun()
+
+            if not mat:
+                st.error("La matrícula es obligatoria")
+            else:
+                existe = get_df(f"SELECT * FROM vehiculos WHERE matricula='{mat}'")
+
+                if not existe.empty:
+                    st.error("❌ Ya existe esa matrícula")
+                else:
+                    run("INSERT INTO vehiculos VALUES (?,?,?,?,?,?,?,?)",
+                        (mat, marca, modelo, ubi, str(itv), str(seg), str(rev), obs))
+                    st.success("Vehículo creado")
+                    st.rerun()
 
 # =====================================================
 # BACKUP
